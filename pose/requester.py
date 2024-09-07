@@ -6,7 +6,6 @@ from sensor_msgs.msg import Image
 from numpy import ndarray
 from cv_bridge import CvBridge
 from pymec import ClientBuilder, api
-from pymec.client import Client
 import cv2
 import asyncio
 import time
@@ -14,71 +13,70 @@ import time
 from .runnner import Runner
 
 
-class Ctx:
+class Requester(Runner[ndarray]):
     def __init__(
         self,
-        client: Client,
-        lambda_id: str,
+        pleiades_host: str,
         publisher: Publisher,
         logger: RcutilsLogger,
         max_job: int,
     ):
-        self.client = client
-        self.lambda_id = lambda_id
+        self.pleiades_host = pleiades_host
         self.publisher = publisher
         self.logger = logger
         self.counter = 0
         self.lock = asyncio.Lock()
         self.max_job = max_job
 
+        super().__init__()
 
-async def init(pub: Publisher, logger: RcutilsLogger, host: str, max_job: int) -> Ctx:
-    client = ClientBuilder().host(host).build()
-    lambda_ = await client.request(
-        api.lambda_.Create(data_id="1", runtime="openpose+gpu")
-    )
+    async def async__init__(self) -> None:
+        client = ClientBuilder().host(self.pleiades_host).build()
+        lambda_ = await client.request(
+            api.lambda_.Create(data_id="1", runtime="openpose+gpu")
+        )
 
-    return Ctx(client, lambda_.lambda_id, pub, logger, max_job)
+        self.client = client
+        self.lambda_id = lambda_.lambda_id
 
+    async def process(self, image: ndarray):
+        async with self.lock:
+            if self.counter > self.max_job:
+                self.logger.warn("Counter reached max")
+                return
 
-async def invoke(ctx: Ctx, image: ndarray):
-    async with ctx.lock:
-        if ctx.counter > ctx.max_job:
-            ctx.logger.warn("Counter reached max")
+            self.counter += 1
+
+        start = time.time()
+        pose = await self.run_job(image)
+        self.logger.info(f"Elapsed: {time.time() - start} s")
+
+        async with self.lock:
+            self.counter -= 1
+
+        if pose is None or len(pose) == 0:
             return
 
-        ctx.counter += 1
+        self.publisher.publish(String(data=pose.decode()))
 
-    client = ctx.client
+    async def run_job(self, image: ndarray) -> bytes:
+        input = await self.client.request(
+            api.data.Upload(data=cv2.imencode(".jpg", image)[1].tobytes())
+        )
+        job = await self.client.request(
+            api.job.Create(lambda_id=self.lambda_id, data_id=input.data_id, tags=[])
+        )
+        job_info = await self.client.request(
+            api.job.Info(job_id=job.job_id, except_="Finished", timeout=10)
+        )
+        if job_info.output is None:
+            return
 
-    start = time.time()
+        pose = await self.client.request(
+            api.data.Download(data_id=job_info.output.data_id)
+        )
 
-    input = await client.request(
-        api.data.Upload(data=cv2.imencode(".jpg", image)[1].tobytes())
-    )
-    job = await client.request(
-        api.job.Create(lambda_id=ctx.lambda_id, data_id=input.data_id, tags=[])
-    )
-    job_info = await client.request(
-        api.job.Info(job_id=job.job_id, except_="Finished", timeout=10)
-    )
-    if job_info.output is None:
-        return
-
-    pose = await client.request(api.data.Download(data_id=job_info.output.data_id))
-
-    async with ctx.lock:
-        ctx.counter -= 1
-
-    # ctx.logger.info("Job Finished")
-    end = time.time()
-    # print(f"Time: {end - start}")
-    ctx.logger.info(f"Elapsed: {end - start} s")
-
-    if pose.data is None or len(pose.data) == 0:
-        return
-
-    ctx.publisher.publish(String(data=pose.data.decode()))
+        return pose.data
 
 
 class Config(BaseModel):
@@ -89,23 +87,24 @@ class Config(BaseModel):
     max_fps: int = 30
 
 
-class Requester(Node):
+class PoseRequester(Node):
     def __init__(self, config: Config):
         super().__init__("pose_requester")
+
         self.__config = config
-
-        self.create_subscription(Image, config.camera_topic, self.__callback, 1)
+        self.__sub = self.create_subscription(
+            Image,
+            config.camera_topic,
+            self.__callback,
+            1,
+        )
         self.__pub = self.create_publisher(String, config.pose_topic, 10)
-
         self.__bridge = CvBridge()
-        self.__runner = Runner(
-            init(
-                self.__pub,
-                self.get_logger(),
-                config.pleiades_host,
-                config.max_job,
-            ),
-            invoke,
+        self.__runner = Requester(
+            config.pleiades_host,
+            self.__pub,
+            self.get_logger(),
+            config.max_job,
         )
 
         self.get_logger().info("Initialized")

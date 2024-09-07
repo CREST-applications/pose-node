@@ -11,7 +11,7 @@ def main():
         pleiades_host=os.environ["PLEIADES_HOST"],
     )
 
-    requester_node = requester.Requester(config)
+    requester_node = requester.PoseRequester(config)
 
     rclpy.spin(requester_node)
 
