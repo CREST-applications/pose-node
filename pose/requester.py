@@ -94,11 +94,11 @@ class PoseRequester(Node):
         self.__config = config
         self.__sub = self.create_subscription(
             Image,
-            config.camera_topic,
+            "/camera",
             self.__callback,
             1,
         )
-        self.__pub = self.create_publisher(String, config.pose_topic, 10)
+        self.__pub = self.create_publisher(String, "/pose", 10)
         self.__bridge = CvBridge()
         self.__runner = Requester(
             config.pleiades_host,
