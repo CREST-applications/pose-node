@@ -80,11 +80,11 @@ class Requester(Runner[ndarray]):
 
 
 class Config(BaseModel):
-    camera_topic: str = "/camera"
-    pose_topic: str = "/pose"
+    camera_topic: str
+    pose_topic: str
     pleiades_host: str
-    max_job: int = 4
-    max_fps: int = 30
+    max_job: int
+    max_fps: int
 
 
 class PoseRequester(Node):
