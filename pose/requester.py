@@ -2,7 +2,8 @@ from rclpy.node import Node, Publisher
 from rclpy.impl.rcutils_logger import RcutilsLogger
 from pydantic import BaseModel
 from std_msgs.msg import String
-from sensor_msgs.msg import Image
+# from sensor_msgs.msg import Image
+from sensor_msgs.msg import CompressedImage
 from numpy import ndarray
 from cv_bridge import CvBridge
 from pymec import ClientBuilder, api
@@ -91,7 +92,7 @@ class PoseRequester(Node):
 
         self.__config = config
         self.__sub = self.create_subscription(
-            Image,
+            CompressedImage,
             "/camera",
             self.__callback,
             1,
@@ -107,10 +108,10 @@ class PoseRequester(Node):
 
         self.get_logger().info("Initialized")
 
-    def __callback(self, msg: Image):
+    def __callback(self, msg: CompressedImage):
         self.get_logger().debug("Received image")
 
-        input = self.__bridge.imgmsg_to_cv2(msg)
+        input = self.__bridge.compressed_imgmsg_to_cv2(msg)
         self.__runner.enqueue(input)
 
         time.sleep(1 / self.__config.max_fps)
