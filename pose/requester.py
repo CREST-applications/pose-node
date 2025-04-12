@@ -6,7 +6,7 @@ from std_msgs.msg import String
 from sensor_msgs.msg import CompressedImage
 from numpy import ndarray
 from cv_bridge import CvBridge
-from pymec import ClientBuilder, api
+from pleiades import Client, api
 import cv2
 import asyncio
 import time
@@ -32,8 +32,8 @@ class Requester(Runner[ndarray]):
         super().__init__()
 
     async def async__init__(self) -> None:
-        client = ClientBuilder().host(self.pleiades_host).build()
-        lambda_ = await client.request(
+        client = Client.builder().host(self.pleiades_host).build()
+        lambda_ = await client.call_api(
             api.lambda_.Create(data_id="1", runtime="openpose+gpu")
         )
 
@@ -61,19 +61,19 @@ class Requester(Runner[ndarray]):
         self.publisher.publish(String(data=pose.decode()))
 
     async def run_job(self, image: ndarray) -> bytes:
-        input = await self.client.request(
+        input = await self.client.call_api(
             api.data.Upload(data=cv2.imencode(".jpg", image)[1].tobytes())
         )
-        job = await self.client.request(
-            api.job.Create(lambda_id=self.lambda_id, data_id=input.data_id, tags=[])
+        job = await self.client.call_api(
+            api.job.Create(lambda_id=self.lambda_id, input_id=input.data_id, tags=[])
         )
-        job_info = await self.client.request(
+        job_info = await self.client.call_api(
             api.job.Info(job_id=job.job_id, except_="Finished", timeout=10)
         )
         if job_info.output is None:
             return
 
-        pose = await self.client.request(
+        pose = await self.client.call_api(
             api.data.Download(data_id=job_info.output.data_id)
         )
 
